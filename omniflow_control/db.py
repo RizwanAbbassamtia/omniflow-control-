@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     cycle_start     TEXT NOT NULL,              -- ISO timestamp the current credit month began
     status          TEXT NOT NULL DEFAULT 'active', -- active | exhausted | disabled
     profile_dir     TEXT NOT NULL DEFAULT '',   -- browser profile the human logged in with
+    api_base_url    TEXT NOT NULL DEFAULT '',   -- Omni Flash API address for this account's key
     notes           TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL
 );
@@ -49,6 +50,19 @@ CREATE TABLE IF NOT EXISTS jobs (
     created_at    TEXT NOT NULL,
     started_at    TEXT,
     finished_at   TEXT
+);
+CREATE TABLE IF NOT EXISTS quota_snapshots (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id   INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    fetched_at   TEXT NOT NULL,
+    billing_mode TEXT NOT NULL DEFAULT '',
+    label        TEXT NOT NULL DEFAULT '',
+    quota_limit  INTEGER,
+    used         INTEGER,
+    remaining    INTEGER,
+    balance      REAL,
+    reset_at     TEXT NOT NULL DEFAULT '',
+    error        TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
@@ -84,6 +98,13 @@ class Database:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(accounts)")}
+        if "api_base_url" not in cols:
+            self.conn.execute("ALTER TABLE accounts ADD COLUMN api_base_url TEXT NOT NULL DEFAULT ''")
+            self.conn.commit()
 
     @contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:
@@ -152,7 +173,7 @@ class Database:
     def update_account(self, account_id: int, **fields) -> None:
         allowed = {
             "label", "team_member", "credits_monthly", "cycle_start",
-            "status", "profile_dir", "notes",
+            "status", "profile_dir", "notes", "api_base_url",
         }
         bad = set(fields) - allowed
         if bad:
@@ -227,6 +248,30 @@ class Database:
         if acc is None:
             raise KeyError(account_id)
         return int(acc["credits_monthly"]) - self.credits_used_this_cycle(account_id)
+
+    # ---- live quota snapshots (accounts with an Omni Flash key) -------------
+    def add_quota_snapshot(self, account_id: int, *, billing_mode: str = "", label: str = "",
+                           quota_limit=None, used=None, remaining=None, balance=None,
+                           reset_at: str = "", error: str = "") -> None:
+        with self.tx() as c:
+            c.execute(
+                "INSERT INTO quota_snapshots(account_id,fetched_at,billing_mode,label,quota_limit,used,"
+                "remaining,balance,reset_at,error) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (account_id, _now(), billing_mode, label, quota_limit, used, remaining, balance, reset_at, error),
+            )
+
+    def latest_quota(self, account_id: int) -> Optional[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM quota_snapshots WHERE account_id=? ORDER BY id DESC LIMIT 1", (account_id,)
+        ).fetchone()
+
+    def effective_remaining(self, account_id: int) -> int:
+        """Live remaining from the newest successful quota check when there is
+        one, otherwise the manual monthly ledger."""
+        snap = self.latest_quota(account_id)
+        if snap is not None and not snap["error"] and snap["remaining"] is not None:
+            return int(snap["remaining"])
+        return self.credits_remaining(account_id)
 
     def start_new_cycle(self, account_id: int, on: Optional[date] = None) -> None:
         """Operator confirms Google renewed the credits; reset the month window.

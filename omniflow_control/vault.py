@@ -37,6 +37,7 @@ class Credentials:
     recovery_email: str = ""
     recovery_phone: str = ""
     notes: str = ""
+    api_key: str = ""               # this account's Omni Flash API key
     extra: dict = field(default_factory=dict)
 
     def to_bytes(self) -> bytes:
@@ -45,7 +46,8 @@ class Credentials:
     @classmethod
     def from_bytes(cls, raw: bytes) -> "Credentials":
         data = json.loads(raw.decode())
-        return cls(**data)
+        known = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
+        return cls(**known)
 
 
 def _derive_key(master_password: str, salt: bytes) -> bytes:

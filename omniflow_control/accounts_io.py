@@ -9,7 +9,7 @@ from typing import Optional
 from .db import Database
 from .vault import Credentials, Vault
 
-COLUMNS = ["email", "label", "team_member", "credits_monthly", "cycle_start", "profile_dir", "notes"]
+COLUMNS = ["email", "label", "team_member", "credits_monthly", "cycle_start", "profile_dir", "api_base_url", "notes"]
 
 
 def import_accounts(db: Database, path: Path, vault: Optional[Vault] = None) -> tuple[int, int]:
@@ -36,13 +36,16 @@ def import_accounts(db: Database, path: Path, vault: Optional[Vault] = None) -> 
                 profile_dir=(row.get("profile_dir") or "").strip(),
                 notes=(row.get("notes") or "").strip(),
             )
-            if vault is not None and vault.is_unlocked and (row.get("password") or row.get("recovery_email")):
+            if (row.get("api_base_url") or "").strip():
+                db.update_account(account_id, api_base_url=row["api_base_url"].strip())
+            if vault is not None and vault.is_unlocked and (row.get("password") or row.get("recovery_email") or row.get("api_key")):
                 vault.store(
                     account_id,
                     Credentials(
                         password=row.get("password") or "",
                         recovery_email=row.get("recovery_email") or "",
                         recovery_phone=row.get("recovery_phone") or "",
+                        api_key=(row.get("api_key") or "").strip(),
                     ),
                 )
             added += 1

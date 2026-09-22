@@ -32,13 +32,42 @@ pip install -r requirements.txt
    **runner command** (Settings page). Outputs land under the output root, which can
    be a local folder or a Google Drive for Desktop folder.
 
+### Omni Flash and 9 Sigma
+
+9 Sigma Automation (the `sceneforge` app) generates clips through the
+**Omni Flash Generation API v2** with an API key that carries its own daily
+limit or balance. The control centre keeps one key per account, encrypted in the
+vault, and does three things with it:
+
+1. **Check live quota**: reads `/api/v2/usage` for one account or for all of
+   them, stores the result, and shows it on the dashboard next to the manual
+   ledger. A refused or disabled key marks the account so nobody wastes time on it.
+2. **Generate directly**: on the Run page choose *Omni Flash API* and the queue
+   submits each prompt, polls, and downloads the clip with the active account's
+   key. A 429 from the service parks the account as exhausted, returns the job
+   to the queue and stops. An operator then activates the next account.
+3. **Hand over to 9 Sigma**: one click writes the chosen account's key into
+   9 Sigma's sealed credential store and its address into 9 Sigma's
+   `config.json`, using 9 Sigma's own code. From then on 9 Sigma productions run
+   on that account. Set the two folders on the Settings page first. This only
+   works on the Windows PC that runs 9 Sigma, because 9 Sigma seals keys to the
+   Windows user.
+
+```bash
+python -m omniflow_control.cli quota                  # live quota for every keyed account
+python -m omniflow_control.cli quota you@gmail.com
+python -m omniflow_control.cli handover you@gmail.com  # 9 Sigma now uses this key
+python -m omniflow_control.cli run --omniflash --max 20
+```
+
 ### Runner contract
 
 The runner command is started once per job with these environment variables:
 
 ```
 OMNI_JOB_ID, OMNI_TITLE, OMNI_PROMPT, OMNI_OUTPUT_DIR,
-OMNI_ACCOUNT_EMAIL, OMNI_PROFILE_DIR, OMNI_CREDITS_REMAINING
+OMNI_ACCOUNT_EMAIL, OMNI_PROFILE_DIR, OMNI_CREDITS_REMAINING,
+OMNI_API_KEY, OMNI_BASE_URL
 ```
 
 It must print one JSON object as its last stdout line:
@@ -61,8 +90,8 @@ python -m omniflow_control.cli run --max 20          # or --dry-run to test the 
 python -m omniflow_control.cli status
 ```
 
-CSV columns: `email, label, team_member, credits_monthly, cycle_start, profile_dir, notes`
-plus optional `password, recovery_email, recovery_phone` (stored encrypted, never exported).
+CSV columns: `email, label, team_member, credits_monthly, cycle_start, profile_dir, api_base_url, notes`
+plus optional `password, recovery_email, recovery_phone, api_key` (stored encrypted, never exported).
 
 ### Tests
 

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 from .db import Database
+from .omniflash import QuotaExhausted
 from .runners import AccountContext, JobSpec, Runner, RunResult
 
 ACTIVE_ACCOUNT_KEY = "active_account_id"
@@ -84,7 +85,23 @@ def _safe_name(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", s).strip("_") or "job"
 
 
-def run_next(db: Database, runner: Runner, actor: str = "") -> RunReport:
+def account_context(db: Database, account_id: int, vault=None) -> AccountContext:
+    acc = db.get_account(account_id)
+    api_key = ""
+    if vault is not None and vault.is_unlocked:
+        creds = vault.load(account_id)
+        api_key = creds.api_key if creds else ""
+    return AccountContext(
+        account_id=account_id,
+        email=acc["email"],
+        profile_dir=acc["profile_dir"],
+        credits_remaining=db.effective_remaining(account_id),
+        api_key=api_key,
+        api_base_url=acc["api_base_url"],
+    )
+
+
+def run_next(db: Database, runner: Runner, actor: str = "", vault=None) -> RunReport:
     """Run the oldest queued job on the active account."""
     account_id = get_active_account_id(db)
     if account_id is None:
@@ -100,7 +117,7 @@ def run_next(db: Database, runner: Runner, actor: str = "") -> RunReport:
     if job is None:
         raise QueueEmpty()
 
-    remaining = db.credits_remaining(account_id)
+    remaining = db.effective_remaining(account_id)
     default_cost = int(db.get_setting(DEFAULT_CREDITS_PER_JOB_KEY) or 0)
     needed = int(job["credits_cost"]) or default_cost
     if remaining <= 0 or remaining < needed:
@@ -110,15 +127,17 @@ def run_next(db: Database, runner: Runner, actor: str = "") -> RunReport:
 
     out_dir = output_root(db) / _safe_name(acc["email"]) / f"{job['id']:06d}-{_safe_name(job['title'] or 'job')}"
     spec = JobSpec(job_id=int(job["id"]), title=job["title"], prompt=job["prompt"], output_dir=out_dir)
-    ctx = AccountContext(
-        account_id=account_id,
-        email=acc["email"],
-        profile_dir=acc["profile_dir"],
-        credits_remaining=remaining,
-    )
+    ctx = account_context(db, account_id, vault)
     db.mark_job_running(int(job["id"]), account_id)
     try:
         result = runner.generate(spec, ctx)
+    except QuotaExhausted as exc:
+        # The service itself said no: put the job back, park the account, stop.
+        db.requeue_job(int(job["id"]))
+        db.update_account(account_id, status="exhausted")
+        db.add_quota_snapshot(account_id, remaining=0, error="")
+        db.log("exhausted", f"{acc['email']} refused by Omni Flash: {exc}", actor)
+        raise AccountExhausted(account_id, acc["email"], 0, needed) from exc
     except Exception as exc:  # runner problems must not crash the queue loop
         db.mark_job_failed(int(job["id"]), str(exc))
         db.log("job-failed", f"job {job['id']} failed on {acc['email']}: {exc}", actor)
@@ -129,13 +148,19 @@ def run_next(db: Database, runner: Runner, actor: str = "") -> RunReport:
     if spent:
         db.add_credit_entry(account_id, -spent, f"job {job['id']}", int(job["id"]))
     db.log("job-done", f"job {job['id']} done on {acc['email']} ({spent} credits)", actor)
-    if db.credits_remaining(account_id) <= 0:
+    snap = db.latest_quota(account_id)
+    if snap is not None and not snap["error"] and snap["remaining"] is not None:
+        db.add_quota_snapshot(account_id, billing_mode=snap["billing_mode"], label=snap["label"],
+                              quota_limit=snap["quota_limit"],
+                              used=(snap["used"] or 0) + spent, remaining=max(0, int(snap["remaining"]) - spent),
+                              balance=snap["balance"], reset_at=snap["reset_at"])
+    if db.effective_remaining(account_id) <= 0:
         db.update_account(account_id, status="exhausted")
         db.log("exhausted", f"{acc['email']} out of credits", actor)
     return RunReport(int(job["id"]), account_id, result)
 
 
-def run_batch(db: Database, runner: Runner, max_jobs: int, actor: str = "") -> list[RunReport]:
+def run_batch(db: Database, runner: Runner, max_jobs: int, actor: str = "", vault=None) -> list[RunReport]:
     """Run up to ``max_jobs`` queued jobs on the active account.
 
     Stops early, without switching accounts, when the queue empties or the
@@ -144,7 +169,7 @@ def run_batch(db: Database, runner: Runner, max_jobs: int, actor: str = "") -> l
     reports: list[RunReport] = []
     for _ in range(max_jobs):
         try:
-            reports.append(run_next(db, runner, actor))
+            reports.append(run_next(db, runner, actor, vault))
         except QueueEmpty:
             break
         except AccountExhausted:

@@ -10,11 +10,11 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from omniflow_control import queue as q  # noqa: E402
+from omniflow_control import ninesigma, queue as q  # noqa: E402
 from omniflow_control.accounts_io import export_accounts, import_accounts  # noqa: E402
 from omniflow_control.cli import RUNNER_COMMAND_KEY  # noqa: E402
 from omniflow_control.db import DEFAULT_DB, Database  # noqa: E402
-from omniflow_control.runners import CommandRunner, DryRunRunner  # noqa: E402
+from omniflow_control.runners import CommandRunner, DryRunRunner, OmniFlashRunner  # noqa: E402
 from omniflow_control.vault import Credentials, Vault, WrongMasterPassword  # noqa: E402
 
 st.set_page_config(page_title="Omni Flow Control", layout="wide")
@@ -63,7 +63,7 @@ page = st.sidebar.radio("Page", ["Dashboard", "Accounts", "Queue", "Run", "Setti
 
 
 def account_label(a) -> str:
-    return f"{a['email']}  [{a['status']}, {db.credits_remaining(a['id'])} left]"
+    return f"{a['email']}  [{a['status']}, {db.effective_remaining(a['id'])} left]"
 
 
 # ---- Dashboard --------------------------------------------------------------
@@ -73,14 +73,18 @@ if page == "Dashboard":
     accounts = db.list_accounts()
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Accounts", len(accounts))
-    c2.metric("With credits", sum(1 for a in accounts if a["status"] == "active" and db.credits_remaining(a["id"]) > 0))
+    c2.metric("With credits", sum(1 for a in accounts if a["status"] == "active" and db.effective_remaining(a["id"]) > 0))
     c3.metric("Exhausted", sum(1 for a in accounts if a["status"] == "exhausted"))
     counts = db.job_counts()
     c4.metric("Queued jobs", counts.get("queued", 0))
 
+    if vault.is_unlocked and st.button("Refresh live quotas from Omni Flash (all accounts with a key)"):
+        out = ninesigma.sync_all_quotas(db, vault, actor)
+        st.success(f"Checked {len(out)} accounts")
+        st.rerun()
     if active_id:
         a = db.get_account(active_id)
-        rem = db.credits_remaining(active_id)
+        rem = db.effective_remaining(active_id)
         if a["status"] == "exhausted" or rem <= 0:
             st.error(f"Active account {a['email']} is out of credits. Activate another account on the Accounts page.")
         else:
@@ -89,21 +93,24 @@ if page == "Dashboard":
         st.warning("No active account. Choose one on the Accounts page.")
 
     st.subheader("Credits by account")
-    st.dataframe(
-        [
-            {
-                "email": a["email"],
-                "team": a["team_member"],
-                "status": a["status"],
-                "monthly": a["credits_monthly"],
-                "used": db.credits_used_this_cycle(a["id"]),
-                "remaining": db.credits_remaining(a["id"]),
-                "cycle_start": a["cycle_start"],
-            }
-            for a in accounts
-        ],
-        use_container_width=True,
-    )
+    rows = []
+    for a in accounts:
+        snap = db.latest_quota(a["id"])
+        rows.append({
+            "email": a["email"],
+            "team": a["team_member"],
+            "status": a["status"],
+            "remaining": db.effective_remaining(a["id"]),
+            "source": "live" if snap is not None and not snap["error"] and snap["remaining"] is not None else "ledger",
+            "live_limit": snap["quota_limit"] if snap else None,
+            "live_used": snap["used"] if snap else None,
+            "resets": snap["reset_at"] if snap else "",
+            "checked": snap["fetched_at"][:19] if snap else "",
+            "quota_error": snap["error"] if snap else "",
+            "ledger_monthly": a["credits_monthly"],
+            "ledger_used": db.credits_used_this_cycle(a["id"]),
+        })
+    st.dataframe(rows, width="stretch")
     st.subheader("Recent activity")
     st.table([{"time": e["created_at"], "kind": e["kind"], "who": e["actor"], "message": e["message"]} for e in db.recent_events(30)])
 
@@ -117,14 +124,28 @@ elif page == "Accounts":
         if not accounts:
             st.info("No accounts yet.")
         else:
-            chosen = st.selectbox("Account", accounts, format_func=account_label)
-            a = chosen
-            rem = db.credits_remaining(a["id"])
-            st.write(f"**{a['email']}**  status: {a['status']}  remaining: {rem}/{a['credits_monthly']}  cycle start: {a['cycle_start']}")
+            by_id = {int(x["id"]): x for x in accounts}
+            chosen_id = st.selectbox("Account", list(by_id), format_func=lambda i: account_label(by_id[i]))
+            a = by_id[chosen_id]
+            rem = db.effective_remaining(a["id"])
+            snap = db.latest_quota(a["id"])
+            st.write(f"**{a['email']}**  status: {a['status']}  remaining: {rem}  cycle start: {a['cycle_start'][:10]}")
+            if snap is not None:
+                st.caption(("Live quota error: " + snap["error"]) if snap["error"] else
+                           f"Live quota at {snap['fetched_at'][:19]}: {snap['used']} used of {snap['quota_limit']}, {snap['remaining']} left, resets {snap['reset_at']}")
             b1, b2, b3, b4 = st.columns(4)
             if b1.button("Activate this account", disabled=a["status"] == "disabled"):
                 q.activate_account(db, a["id"], actor)
                 st.rerun()
+            l1, l2 = st.columns(2)
+            if l1.button("Check live quota", disabled=not vault.is_unlocked):
+                quota = ninesigma.sync_quota(db, vault, a["id"], actor)
+                st.success(quota.summary()) if quota else st.error(db.latest_quota(a["id"])["error"])
+            if l2.button("Hand this account to 9 Sigma", disabled=not vault.is_unlocked):
+                try:
+                    st.success(ninesigma.hand_over(db, vault, a["id"], actor))
+                except ninesigma.HandOverError as e:
+                    st.error(str(e))
             if b2.button("Start new credit cycle (renewed)"):
                 db.start_new_cycle(a["id"])
                 st.rerun()
@@ -142,9 +163,10 @@ elif page == "Accounts":
                 team = st.text_input("Team member", a["team_member"])
                 monthly = st.number_input("Monthly credits", 0, 100000, int(a["credits_monthly"]))
                 profile = st.text_input("Browser profile directory (logged in by a human)", a["profile_dir"])
+                api_url = st.text_input("Omni Flash address for this account's key", a["api_base_url"])
                 notes = st.text_area("Notes", a["notes"])
                 if st.form_submit_button("Save"):
-                    db.update_account(a["id"], label=label, team_member=team, credits_monthly=int(monthly), profile_dir=profile, notes=notes)
+                    db.update_account(a["id"], label=label, team_member=team, credits_monthly=int(monthly), profile_dir=profile, api_base_url=api_url, notes=notes)
                     st.success("Saved")
                     st.rerun()
 
@@ -165,9 +187,10 @@ elif page == "Accounts":
                     pw = st.text_input("Password", creds.password, type="password")
                     rec = st.text_input("Recovery email", creds.recovery_email)
                     ph = st.text_input("Recovery phone", creds.recovery_phone)
+                    api_key = st.text_input("Omni Flash API key", creds.api_key, type="password")
                     cn = st.text_area("Login notes", creds.notes)
                     if st.form_submit_button("Save login details"):
-                        vault.store(a["id"], Credentials(pw, rec, ph, cn))
+                        vault.store(a["id"], Credentials(pw, rec, ph, cn, api_key=api_key))
                         db.log("credentials", f"login details updated for {a['email']}", actor)
                         st.success("Stored encrypted")
                 if st.checkbox("Reveal password"):
@@ -181,7 +204,9 @@ elif page == "Accounts":
             monthly = st.number_input("Monthly credits", 0, 100000, 1000)
             cs = st.date_input("Credit cycle start", date.today())
             profile = st.text_input("Browser profile directory")
+            api_url = st.text_input("Omni Flash address")
             pw = st.text_input("Password (stored encrypted)", type="password")
+            api_key = st.text_input("Omni Flash API key (stored encrypted)", type="password")
             if st.form_submit_button("Add account"):
                 if not email:
                     st.error("email required")
@@ -189,16 +214,18 @@ elif page == "Accounts":
                     st.error("already exists")
                 else:
                     aid = db.add_account(email, label, team, int(monthly), cs, profile)
-                    if pw:
+                    if api_url:
+                        db.update_account(aid, api_base_url=api_url)
+                    if pw or api_key:
                         if vault.is_unlocked:
-                            vault.store(aid, Credentials(password=pw))
+                            vault.store(aid, Credentials(password=pw, api_key=api_key))
                         else:
                             st.warning("Vault locked, password not stored")
                     db.log("account", f"added {email}", actor)
                     st.success(f"Added {email}")
 
     with tab_import:
-        st.write("CSV columns: email, label, team_member, credits_monthly, cycle_start, profile_dir, notes, and optionally password, recovery_email, recovery_phone.")
+        st.write("CSV columns: email, label, team_member, credits_monthly, cycle_start, profile_dir, api_base_url, notes, and optionally password, recovery_email, recovery_phone, api_key (encrypted).")
         up = st.file_uploader("accounts.csv", type="csv")
         if up is not None and st.button("Import"):
             tmp = Path(st.session_state.get("tmp_dir", ".")) / "import.csv"
@@ -244,7 +271,7 @@ elif page == "Queue":
              "prompt": j["prompt"][:80]}
             for j in jobs
         ],
-        use_container_width=True,
+        width="stretch",
     )
     jid = st.number_input("Job id", 0, step=1)
     cA, cB = st.columns(2)
@@ -263,11 +290,16 @@ elif page == "Run":
         a = db.get_account(active_id)
         st.info(f"Active: {a['email']}  remaining credits: {db.credits_remaining(active_id)}")
         max_jobs = st.number_input("Max jobs this batch", 1, 500, 10)
-        dry = st.checkbox("Dry run (no credits, writes prompt files only)")
+        mode = st.radio("Generate with", ["Omni Flash API (this account's key)", "Runner command (Settings page)", "Dry run (no credits)"])
         if st.button("Run batch"):
             cmd = db.get_setting(RUNNER_COMMAND_KEY) or ""
-            if dry:
+            if mode.startswith("Dry"):
                 runner = DryRunRunner()
+            elif mode.startswith("Omni"):
+                if not vault.is_unlocked:
+                    st.error("Unlock the vault so the account's API key can be used.")
+                    st.stop()
+                runner = OmniFlashRunner()
             elif not cmd:
                 st.error("Set the runner command on the Settings page first.")
                 st.stop()
@@ -277,7 +309,7 @@ elif page == "Run":
             prog = st.progress(0.0)
             try:
                 for i in range(int(max_jobs)):
-                    reports.append(q.run_next(db, runner, actor))
+                    reports.append(q.run_next(db, runner, actor, vault))
                     prog.progress((i + 1) / int(max_jobs))
             except q.QueueEmpty:
                 st.info("Queue is empty.")
@@ -298,10 +330,15 @@ elif page == "Settings":
     cmd = st.text_area("Runner command (your bulk-creation tool)", db.get_setting(RUNNER_COMMAND_KEY) or "",
                        help="Receives OMNI_PROMPT, OMNI_OUTPUT_DIR, OMNI_ACCOUNT_EMAIL, OMNI_PROFILE_DIR, ... and prints a JSON result line.")
     default_cost = st.number_input("Default credits per job", 0, 10000, int(db.get_setting(q.DEFAULT_CREDITS_PER_JOB_KEY) or 0))
+    st.subheader("9 Sigma Automation")
+    sf_dir = st.text_input("9 Sigma code folder (contains the `sceneforge` package)", db.get_setting(ninesigma.SCENEFORGE_DIR_KEY) or "")
+    cfg_dir = st.text_input("9 Sigma config folder (holds config.json)", db.get_setting(ninesigma.NINESIGMA_CONFIG_DIR_KEY) or "")
     if st.button("Save settings"):
         db.set_setting(q.OUTPUT_ROOT_KEY, out)
         db.set_setting(RUNNER_COMMAND_KEY, cmd)
         db.set_setting(q.DEFAULT_CREDITS_PER_JOB_KEY, str(int(default_cost)))
+        db.set_setting(ninesigma.SCENEFORGE_DIR_KEY, sf_dir)
+        db.set_setting(ninesigma.NINESIGMA_CONFIG_DIR_KEY, cfg_dir)
         st.success("Saved")
     st.subheader("Change master password")
     if vault.is_initialised:

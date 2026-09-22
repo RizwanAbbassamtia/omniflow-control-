@@ -5,7 +5,9 @@
     python -m omniflow_control.cli export-accounts out.csv
     python -m omniflow_control.cli add-job "prompt text" --title "Scene 1" --cost 10
     python -m omniflow_control.cli activate you@gmail.com
-    python -m omniflow_control.cli run --max 20 [--dry-run]
+    python -m omniflow_control.cli run --max 20 [--dry-run | --omniflash]
+    python -m omniflow_control.cli quota [email]          live Omni Flash quota
+    python -m omniflow_control.cli handover you@gmail.com  give 9 Sigma this account's key
     python -m omniflow_control.cli status
 """
 from __future__ import annotations
@@ -16,10 +18,10 @@ import os
 import sys
 from pathlib import Path
 
-from . import queue as q
+from . import ninesigma, queue as q
 from .accounts_io import export_accounts, import_accounts
 from .db import DEFAULT_DB, Database
-from .runners import CommandRunner, DryRunRunner
+from .runners import CommandRunner, DryRunRunner, OmniFlashRunner
 from .vault import Vault
 
 RUNNER_COMMAND_KEY = "runner_command"
@@ -79,10 +81,48 @@ def cmd_activate(args):
     return 0
 
 
+def _unlocked_vault(db) -> Vault:
+    v = Vault(db)
+    v.unlock(os.environ.get("OMNI_MASTER_PASSWORD") or getpass.getpass("Master password: "))
+    return v
+
+
+def cmd_quota(args):
+    db = _db(args)
+    vault = _unlocked_vault(db)
+    if args.email:
+        acc = db.get_account_by_email(args.email)
+        if acc is None:
+            print("no such account", file=sys.stderr); return 1
+        results = {acc["id"]: ninesigma.sync_quota(db, vault, acc["id"], args.actor)}
+    else:
+        results = ninesigma.sync_all_quotas(db, vault, args.actor)
+    for aid, quota in results.items():
+        acc = db.get_account(aid)
+        print(f"{acc['email']}: {quota.summary() if quota else 'ERROR ' + db.latest_quota(aid)['error']}")
+    return 0
+
+
+def cmd_handover(args):
+    db = _db(args)
+    acc = db.get_account_by_email(args.email)
+    if acc is None:
+        print("no such account", file=sys.stderr); return 1
+    try:
+        print(ninesigma.hand_over(db, _unlocked_vault(db), acc["id"], args.actor))
+    except ninesigma.HandOverError as exc:
+        print(f"error: {exc}", file=sys.stderr); return 1
+    return 0
+
+
 def cmd_run(args):
     db = _db(args)
+    vault = None
     if args.dry_run:
         runner = DryRunRunner(credits_per_job=args.dry_run_cost)
+    elif args.omniflash:
+        vault = _unlocked_vault(db)
+        runner = OmniFlashRunner()
     else:
         cmd = db.get_setting(RUNNER_COMMAND_KEY) or ""
         if not cmd:
@@ -91,7 +131,7 @@ def cmd_run(args):
             return 1
         runner = CommandRunner(cmd)
     try:
-        reports = q.run_batch(db, runner, args.max, args.actor)
+        reports = q.run_batch(db, runner, args.max, args.actor, vault)
     except q.NoActiveAccount as exc:
         print(f"stopped: {exc}", file=sys.stderr)
         return 2
@@ -100,7 +140,7 @@ def cmd_run(args):
     active = q.get_active_account_id(db)
     if active:
         acc = db.get_account(active)
-        print(f"{acc['email']}: status={acc['status']} remaining={db.credits_remaining(active)}")
+        print(f"{acc['email']}: status={acc['status']} remaining={db.effective_remaining(active)}")
         if acc["status"] == "exhausted":
             print("active account is out of credits; an operator must activate another one")
             return 3
@@ -132,7 +172,10 @@ def main(argv=None) -> int:
     s = sub.add_parser("activate"); s.add_argument("email"); s.set_defaults(fn=cmd_activate)
     s = sub.add_parser("run"); s.add_argument("--max", type=int, default=10)
     s.add_argument("--dry-run", action="store_true"); s.add_argument("--dry-run-cost", type=int, default=0)
+    s.add_argument("--omniflash", action="store_true", help="generate through the Omni Flash API with the active account's key")
     s.set_defaults(fn=cmd_run)
+    s = sub.add_parser("quota"); s.add_argument("email", nargs="?"); s.set_defaults(fn=cmd_quota)
+    s = sub.add_parser("handover"); s.add_argument("email"); s.set_defaults(fn=cmd_handover)
     sub.add_parser("status").set_defaults(fn=cmd_status)
 
     args = p.parse_args(argv)
