@@ -5,7 +5,16 @@
 |-----|-----------|--------------|
 | `omniflow_control/app.py` | `streamlit run omniflow_control/app.py` | Central control of every Google account the team uses for Omni Flow: encrypted logins, monthly credit ledger, prompt queue, batch runs, dashboard. |
 
-## Install
+## Install on the Windows laptop (no command line)
+
+1. Install Python 3.11 or newer from python.org and tick **Add python.exe to PATH**.
+2. Download this repository (green **Code** button, **Download ZIP**) or `git clone` it, and unzip it anywhere, for example `C:\OmniFlowControl`.
+3. Double-click **Start-OmniFlowControl.bat**. The first run installs the packages, then the dashboard opens at http://localhost:8501.
+4. In the sidebar create the master password, then use the **Accounts** page to import your CSV.
+
+Later, double-click **Update-OmniFlowControl.bat** to pull the newest version.
+
+## Install (command line)
 
 ```bash
 python -m venv .venv
