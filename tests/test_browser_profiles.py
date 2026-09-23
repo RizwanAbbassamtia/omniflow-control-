@@ -1,6 +1,7 @@
 """Check isolation and authenticated proxy forwarding without external network."""
 import socket
 import threading
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -8,6 +9,57 @@ import pytest
 from omniflow_control.browser_profiles import ProxyConfig, ProxyRelay, ProfileError, launch_profile
 from omniflow_control.db import Database
 from omniflow_control.vault import Credentials, Vault
+
+
+def test_add_one_form_saves_proxy_and_encrypted_login(tmp_path, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+
+    monkeypatch.setenv("OMNI_DB", str(tmp_path / "form.db"))
+    app = AppTest.from_file(Path(__file__).resolve().parents[1] / "omniflow_control/app.py").run()
+    app.sidebar.text_input(key="init_pw").set_value("a safe master password")
+    next(b for b in app.sidebar.button if b.label == "Initialise vault").click().run()
+    app.sidebar.radio[0].set_value("Accounts").run()
+    field = lambda elements, label: next(e for e in elements if e.label == label)
+    field(app.text_input, "Gmail address").set_value("manual@example.com")
+    field(app.text_input, "Gmail password (optional, encrypted)").set_value("google-login")
+    field(app.text_input, "Recovery email (optional, encrypted)").set_value("backup@example.com")
+    field(app.selectbox, "New account proxy type").set_value("http")
+    field(app.text_input, "New account proxy host").set_value("proxy.example.com")
+    field(app.number_input, "New account proxy port").set_value(8080)
+    field(app.text_input, "New account proxy username").set_value("login")
+    field(app.text_input, "New account proxy password").set_value("secret")
+    field(app.button, "Add account").click().run()
+
+    assert not app.exception and any("Added manual@example.com" in x.value for x in app.success)
+    db = Database(tmp_path / "form.db")
+    account = db.get_account_by_email("manual@example.com")
+    assert (account["proxy_type"], account["proxy_host"], account["proxy_port"]) == ("http", "proxy.example.com", 8080)
+    vault = Vault(db)
+    vault.unlock("a safe master password")
+    saved = vault.load(account["id"])
+    assert saved.proxy_password == "secret"
+    assert saved.password == "google-login" and saved.recovery_email == "backup@example.com"
+    assert b"secret" not in db.get_credentials(account["id"])
+    assert b"google-login" not in db.get_credentials(account["id"])
+    db.close()
+
+
+def test_add_one_form_rejects_invalid_proxy_before_account_creation(tmp_path, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+
+    monkeypatch.setenv("OMNI_DB", str(tmp_path / "invalid.db"))
+    app = AppTest.from_file(Path(__file__).resolve().parents[1] / "omniflow_control/app.py").run()
+    app.sidebar.radio[0].set_value("Accounts").run()
+    field = lambda elements, label: next(e for e in elements if e.label == label)
+    field(app.text_input, "Gmail address").set_value("invalid@example.com")
+    field(app.selectbox, "New account proxy type").set_value("http")
+    field(app.text_input, "New account proxy host").set_value("proxy.example.com")
+    field(app.button, "Add account").click().run()
+
+    assert any("port" in x.value.lower() for x in app.error)
+    db = Database(tmp_path / "invalid.db")
+    assert db.get_account_by_email("invalid@example.com") is None
+    db.close()
 
 
 def test_authenticated_http_connect_forwards_and_never_exposes_secret_to_browser():
