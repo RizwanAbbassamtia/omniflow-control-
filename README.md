@@ -1,5 +1,8 @@
 # Omni Flow Control Centre
 
+**Current version: 0.2.0.** This version includes per-account proxy settings,
+encrypted proxy credentials, connection tests, and isolated Chrome/Edge browser
+profiles. It is a separate application from the Omni Flow desktop installer.
 
 | App | Start with | What it does |
 |-----|-----------|--------------|
@@ -8,11 +11,19 @@
 ## Install on the Windows laptop (no command line)
 
 1. Install Python 3.11 or newer from python.org and tick **Add python.exe to PATH**.
-2. Download this repository (green **Code** button, **Download ZIP**) or `git clone` it, and unzip it anywhere, for example `C:\OmniFlowControl`.
+2. Clone this repository with Git for Windows if you want one-click updates:
+   `git clone https://github.com/RizwanAbbassamtia/omniflow-control-`.
+   Alternatively, download the release ZIP and extract it to a folder such as
+   `C:\OmniFlowControl`.
 3. Double-click **Start-OmniFlowControl.bat**. The first run installs the packages, then the dashboard opens at http://localhost:8501.
 4. In the sidebar create the master password, then use the **Accounts** page to import your CSV.
 
-Later, double-click **Update-OmniFlowControl.bat** to pull the newest version.
+If you cloned the repository, double-click **Update-OmniFlowControl.bat** to pull
+newer versions. If you installed from a ZIP, download and extract a new release
+instead; the update batch file needs a Git clone. Account data and encrypted
+credentials are stored outside the code folder in
+`%USERPROFILE%\.omniflow_control\control.db` by default. Back up this database
+before changing computers or reinstalling Windows.
 
 ## Install (command line)
 

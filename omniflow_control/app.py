@@ -11,7 +11,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from omniflow_control import ninesigma, queue as q  # noqa: E402
+from omniflow_control import __version__, ninesigma, queue as q  # noqa: E402
 from omniflow_control.browser_profiles import ProxyConfig, ProfileError, check_proxy, launch_profile  # noqa: E402
 from omniflow_control.accounts_io import export_accounts, import_accounts  # noqa: E402
 from omniflow_control.cli import RUNNER_COMMAND_KEY  # noqa: E402
@@ -32,6 +32,7 @@ if "vault_instance" not in st.session_state:
     st.session_state.vault_instance = Vault(db)
 vault = st.session_state.vault_instance
 actor = st.sidebar.text_input("Your name", value=st.session_state.get("actor", ""), key="actor")
+st.sidebar.caption(f"Control Centre v{__version__}")
 
 # ---- vault gate -------------------------------------------------------------
 with st.sidebar.expander("Vault", expanded=not vault.is_unlocked):
