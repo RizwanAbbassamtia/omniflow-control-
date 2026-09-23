@@ -19,6 +19,9 @@ CREATE TABLE IF NOT EXISTS accounts (
     cycle_start     TEXT NOT NULL,              -- ISO timestamp the current credit month began
     status          TEXT NOT NULL DEFAULT 'active', -- active | exhausted | disabled
     profile_dir     TEXT NOT NULL DEFAULT '',   -- browser profile the human logged in with
+    proxy_type      TEXT NOT NULL DEFAULT '',   -- http | https | socks5; empty means no proxy
+    proxy_host      TEXT NOT NULL DEFAULT '',
+    proxy_port      INTEGER NOT NULL DEFAULT 0,
     api_base_url    TEXT NOT NULL DEFAULT '',   -- Omni Flash API address for this account's key
     notes           TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL
@@ -104,7 +107,12 @@ class Database:
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(accounts)")}
         if "api_base_url" not in cols:
             self.conn.execute("ALTER TABLE accounts ADD COLUMN api_base_url TEXT NOT NULL DEFAULT ''")
-            self.conn.commit()
+        for name, definition in (("proxy_type", "TEXT NOT NULL DEFAULT ''"),
+                                 ("proxy_host", "TEXT NOT NULL DEFAULT ''"),
+                                 ("proxy_port", "INTEGER NOT NULL DEFAULT 0")):
+            if name not in cols:
+                self.conn.execute(f"ALTER TABLE accounts ADD COLUMN {name} {definition}")
+        self.conn.commit()
 
     @contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:
@@ -174,6 +182,7 @@ class Database:
         allowed = {
             "label", "team_member", "credits_monthly", "cycle_start",
             "status", "profile_dir", "notes", "api_base_url",
+            "proxy_type", "proxy_host", "proxy_port",
         }
         bad = set(fields) - allowed
         if bad:

@@ -21,5 +21,5 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 echo Starting the Omni Flow Control Centre at http://localhost:8501 ...
-".venv\Scripts\python.exe" -m streamlit run omniflow_control\app.py --server.headless true --browser.gatherUsageStats false
+".venv\Scripts\python.exe" -m streamlit run omniflow_control\app.py --server.address 127.0.0.1 --server.headless true --browser.gatherUsageStats false
 pause

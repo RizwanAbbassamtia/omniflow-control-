@@ -47,6 +47,8 @@ The browser opens at http://localhost:8501. Leave the black window open while us
    *Initialise vault*. Write this password down somewhere safe. It is never
    stored and cannot be recovered.
 2. **Sidebar, Your name**: type your name so the activity log shows who did what.
+   This is a local operator label, not an access-control login. Do not expose
+   the dashboard on your office network or the public Internet.
 3. **Settings page**:
    - Output root folder: a local folder or a Google Drive for Desktop folder.
    - 9 Sigma code folder: the folder that contains the `sceneforge` package,
@@ -82,6 +84,12 @@ An account whose key is refused is marked disabled with the reason.
    Clips land in the output folder under the account's name.
 4. When the active account runs out, the run stops and the Dashboard shows a
    red banner. Go to Accounts, activate the next account, run again.
+5. To open Google Flow for an account, go to **Accounts → Manage → Browser
+   profile and proxy**. Enter its proxy type, host, port and, if required,
+   username/password. Unlock the vault and save, click **Test proxy** to see
+   the public IP, then click **Open profile**. Sign in yourself the first time.
+   Leave the control centre running while the profile is open. A failed proxy
+   test stops the launch. Keep separate profile directories per account.
 
 ## 9. Updating
 

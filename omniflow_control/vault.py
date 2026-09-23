@@ -38,6 +38,8 @@ class Credentials:
     recovery_phone: str = ""
     notes: str = ""
     api_key: str = ""               # this account's Omni Flash API key
+    proxy_username: str = ""
+    proxy_password: str = ""
     extra: dict = field(default_factory=dict)
 
     def to_bytes(self) -> bytes:

@@ -40,6 +40,15 @@ pip install -r requirements.txt
 5. Each job hands off to your existing bulk-creation tool through the
    **runner command** (Settings page). Outputs land under the output root, which can
    be a local folder or a Google Drive for Desktop folder.
+6. **Browser profiles**: open Accounts → Manage → Browser profile and proxy.
+   Enter the proxy type (HTTP, HTTPS or SOCKS5), host, port and optional
+   username/password. Save, test the connection, then click **Open profile**.
+   This creates a persistent, separate Chrome/Edge user-data directory per
+   account (or uses the directory specified on that account). Sign in manually
+   in the opened browser. Each launch checks the proxy first; it will not open
+   the browser if the check fails. The observed IP is displayed after testing.
+   Leave the app running while the browser is open; its loopback relay supplies
+   upstream proxy authentication without putting secrets on the command line.
 
 ### Omni Flash and 9 Sigma
 
@@ -86,7 +95,9 @@ It must print one JSON object as its last stdout line:
 ```
 
 `OMNI_PROFILE_DIR` is the browser profile a team member already signed into for
-that account. Login stays a human step.
+that account. Login stays a human step. The external runner is independently
+responsible for its network settings; the local browser relay applies only to
+the **Open profile** button.
 
 ### Command line
 
@@ -99,8 +110,8 @@ python -m omniflow_control.cli run --max 20          # or --dry-run to test the 
 python -m omniflow_control.cli status
 ```
 
-CSV columns: `email, label, team_member, credits_monthly, cycle_start, profile_dir, api_base_url, notes`
-plus optional `password, recovery_email, recovery_phone, api_key` (stored encrypted, never exported).
+CSV columns: `email, label, team_member, credits_monthly, cycle_start, profile_dir, api_base_url, notes, proxy_type, proxy_host, proxy_port`
+plus optional `password, recovery_email, recovery_phone, api_key, proxy_username, proxy_password` (stored encrypted, never exported). Unlock the vault before importing credentials. The source CSV contains plain-text secrets; delete it after import.
 
 ### Tests
 
@@ -110,6 +121,9 @@ pytest -q
 
 ### Later: several machines
 
-The database is a single SQLite file. To let several PCs share it, point `OMNI_DB`
-at a file on a shared drive for light use, or swap `db.py` for Postgres when the
-team grows. The queue and vault code do not depend on SQLite specifics.
+This release is local to one Windows user and one computer. Keep `OMNI_DB` on
+the local disk: a SQLite database file on an SMB or synced shared drive can
+be damaged by concurrent access. The local Streamlit server has no team login
+or role enforcement and must not be exposed to other computers. A central
+multi-user installation needs a server-side database, authenticated users,
+role checks and encrypted session backup before deployment.
