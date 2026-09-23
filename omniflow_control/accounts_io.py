@@ -2,17 +2,20 @@
 from __future__ import annotations
 
 import csv
+from contextlib import nullcontext
 from datetime import date
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TextIO
 
 from .db import Database
 from .vault import Credentials, Vault
+from .browser_profiles import ProxyConfig
 
-COLUMNS = ["email", "label", "team_member", "credits_monthly", "cycle_start", "profile_dir", "api_base_url", "notes"]
+COLUMNS = ["email", "label", "team_member", "credits_monthly", "cycle_start", "profile_dir",
+           "api_base_url", "notes", "proxy_type", "proxy_host", "proxy_port"]
 
 
-def import_accounts(db: Database, path: Path, vault: Optional[Vault] = None) -> tuple[int, int]:
+def import_accounts(db: Database, path: Path | TextIO, vault: Optional[Vault] = None) -> tuple[int, int]:
     """Import accounts from CSV. Returns (added, skipped).
 
     Optional ``password`` / ``recovery_email`` columns are stored in the vault
@@ -20,13 +23,22 @@ def import_accounts(db: Database, path: Path, vault: Optional[Vault] = None) -> 
     table.
     """
     added = skipped = 0
-    with open(path, newline="", encoding="utf-8-sig") as f:
+    source = nullcontext(path) if hasattr(path, "read") else open(path, newline="", encoding="utf-8-sig")
+    with source as f:
         for row in csv.DictReader(f):
             email = (row.get("email") or "").strip().lower()
             if not email or db.get_account_by_email(email):
                 skipped += 1
                 continue
             cs = (row.get("cycle_start") or "").strip()
+            kind = (row.get("proxy_type") or "").strip().lower()
+            host = (row.get("proxy_host") or "").strip()
+            port = int(row.get("proxy_port") or 0)
+            if kind:
+                ProxyConfig(kind, host, port, row.get("proxy_username") or "", row.get("proxy_password") or "").validate()
+            secret_fields = ("password", "recovery_email", "recovery_phone", "api_key", "proxy_username", "proxy_password")
+            if any(row.get(k) for k in secret_fields) and (vault is None or not vault.is_unlocked):
+                raise ValueError("Unlock the vault before importing accounts with credentials or proxy authentication")
             account_id = db.add_account(
                 email=email,
                 label=(row.get("label") or "").strip(),
@@ -38,7 +50,9 @@ def import_accounts(db: Database, path: Path, vault: Optional[Vault] = None) -> 
             )
             if (row.get("api_base_url") or "").strip():
                 db.update_account(account_id, api_base_url=row["api_base_url"].strip())
-            if vault is not None and vault.is_unlocked and (row.get("password") or row.get("recovery_email") or row.get("api_key")):
+            if kind:
+                db.update_account(account_id, proxy_type=kind, proxy_host=host, proxy_port=port)
+            if any(row.get(k) for k in secret_fields):
                 vault.store(
                     account_id,
                     Credentials(
@@ -46,10 +60,12 @@ def import_accounts(db: Database, path: Path, vault: Optional[Vault] = None) -> 
                         recovery_email=row.get("recovery_email") or "",
                         recovery_phone=row.get("recovery_phone") or "",
                         api_key=(row.get("api_key") or "").strip(),
+                        proxy_username=row.get("proxy_username") or "",
+                        proxy_password=row.get("proxy_password") or "",
                     ),
                 )
             added += 1
-    db.log("import", f"imported {added} accounts from {path.name}, skipped {skipped}")
+    db.log("import", f"imported {added} accounts from {getattr(path, 'name', 'upload')}, skipped {skipped}")
     return added, skipped
 
 

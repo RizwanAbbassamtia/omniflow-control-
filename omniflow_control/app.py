@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sys
+from io import StringIO
 from datetime import date
 from pathlib import Path
 
@@ -11,6 +12,7 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from omniflow_control import ninesigma, queue as q  # noqa: E402
+from omniflow_control.browser_profiles import ProxyConfig, ProfileError, check_proxy, launch_profile  # noqa: E402
 from omniflow_control.accounts_io import export_accounts, import_accounts  # noqa: E402
 from omniflow_control.cli import RUNNER_COMMAND_KEY  # noqa: E402
 from omniflow_control.db import DEFAULT_DB, Database  # noqa: E402
@@ -25,13 +27,10 @@ def get_db() -> Database:
     return Database(os.environ.get("OMNI_DB", str(DEFAULT_DB)))
 
 
-@st.cache_resource
-def get_vault() -> Vault:
-    return Vault(get_db())
-
-
 db = get_db()
-vault = get_vault()
+if "vault_instance" not in st.session_state:
+    st.session_state.vault_instance = Vault(db)
+vault = st.session_state.vault_instance
 actor = st.sidebar.text_input("Your name", value=st.session_state.get("actor", ""), key="actor")
 
 # ---- vault gate -------------------------------------------------------------
@@ -146,6 +145,45 @@ elif page == "Accounts":
                     st.success(ninesigma.hand_over(db, vault, a["id"], actor))
                 except ninesigma.HandOverError as e:
                     st.error(str(e))
+            with st.expander("Browser profile and proxy", expanded=False):
+                st.caption("One persistent browser directory per account. Sign in to Google manually in its window. Proxy credentials stay encrypted in the vault.")
+                existing = vault.load(a["id"]) if vault.is_unlocked else None
+                with st.form("proxy_settings"):
+                    types = ["", "http", "https", "socks5"]
+                    kind = st.selectbox("Proxy type", types, index=types.index(a["proxy_type"]) if a["proxy_type"] in types else 0,
+                                        format_func=lambda x: x.upper() if x else "Not configured")
+                    host = st.text_input("Proxy host", a["proxy_host"])
+                    port = st.number_input("Proxy port", min_value=0, max_value=65535, value=int(a["proxy_port"]))
+                    username = st.text_input("Proxy username", existing.proxy_username if existing else "", disabled=not vault.is_unlocked)
+                    proxy_password = st.text_input("Proxy password", type="password", disabled=not vault.is_unlocked,
+                                                   placeholder="Saved" if existing and existing.proxy_password else "")
+                    if st.form_submit_button("Save proxy", disabled=not vault.is_unlocked):
+                        try:
+                            ProxyConfig(kind, host.strip(), int(port), username, proxy_password or (existing.proxy_password if existing else "")).validate()
+                            db.update_account(a["id"], proxy_type=kind, proxy_host=host.strip(), proxy_port=int(port))
+                            existing = existing or Credentials()
+                            existing.proxy_username = username
+                            existing.proxy_password = proxy_password or existing.proxy_password
+                            vault.store(a["id"], existing)
+                            db.log("proxy", f"proxy configuration changed for {a['email']}", actor)
+                            st.success("Proxy saved")
+                        except ProfileError as e:
+                            st.error(str(e))
+                p1, p2 = st.columns(2)
+                if p1.button("Test proxy", disabled=not vault.is_unlocked):
+                    try:
+                        secrets = vault.load(a["id"]) or Credentials()
+                        ip = check_proxy(ProxyConfig(a["proxy_type"], a["proxy_host"], int(a["proxy_port"]),
+                                                     secrets.proxy_username, secrets.proxy_password))
+                        st.success(f"Proxy connected. Public IP: {ip}")
+                    except ProfileError as e:
+                        st.error(str(e))
+                if p2.button("Open profile", disabled=not vault.is_unlocked):
+                    try:
+                        ip = launch_profile(db, vault, a["id"], actor)
+                        st.success(f"Browser opened through proxy. Public IP: {ip}")
+                    except (ProfileError, OSError) as e:
+                        st.error(str(e))
             if b2.button("Start new credit cycle (renewed)"):
                 db.start_new_cycle(a["id"])
                 st.rerun()
@@ -162,7 +200,8 @@ elif page == "Accounts":
                 label = st.text_input("Label", a["label"])
                 team = st.text_input("Team member", a["team_member"])
                 monthly = st.number_input("Monthly credits", 0, 100000, int(a["credits_monthly"]))
-                profile = st.text_input("Browser profile directory (logged in by a human)", a["profile_dir"])
+                profile = st.text_input("Dedicated browser user-data directory (blank = managed automatically)", a["profile_dir"],
+                                        help="Use a separate absolute directory for each account. Existing regular Chrome profile names such as Default are not user-data directories.")
                 api_url = st.text_input("Omni Flash address for this account's key", a["api_base_url"])
                 notes = st.text_area("Notes", a["notes"])
                 if st.form_submit_button("Save"):
@@ -190,7 +229,9 @@ elif page == "Accounts":
                     api_key = st.text_input("Omni Flash API key", creds.api_key, type="password")
                     cn = st.text_area("Login notes", creds.notes)
                     if st.form_submit_button("Save login details"):
-                        vault.store(a["id"], Credentials(pw, rec, ph, cn, api_key=api_key))
+                        creds.password, creds.recovery_email, creds.recovery_phone = pw, rec, ph
+                        creds.notes, creds.api_key = cn, api_key
+                        vault.store(a["id"], creds)
                         db.log("credentials", f"login details updated for {a['email']}", actor)
                         st.success("Stored encrypted")
                 if st.checkbox("Reveal password"):
@@ -203,7 +244,7 @@ elif page == "Accounts":
             team = st.text_input("Team member")
             monthly = st.number_input("Monthly credits", 0, 100000, 1000)
             cs = st.date_input("Credit cycle start", date.today())
-            profile = st.text_input("Browser profile directory")
+            profile = st.text_input("Dedicated browser user-data directory (optional)")
             api_url = st.text_input("Omni Flash address")
             pw = st.text_input("Password (stored encrypted)", type="password")
             api_key = st.text_input("Omni Flash API key (stored encrypted)", type="password")
@@ -225,14 +266,15 @@ elif page == "Accounts":
                     st.success(f"Added {email}")
 
     with tab_import:
-        st.write("CSV columns: email, label, team_member, credits_monthly, cycle_start, profile_dir, api_base_url, notes, and optionally password, recovery_email, recovery_phone, api_key (encrypted).")
+        st.write("CSV columns: email, label, team_member, credits_monthly, cycle_start, profile_dir, api_base_url, notes, proxy_type, proxy_host, proxy_port; optional password, recovery_email, recovery_phone, api_key, proxy_username, proxy_password (encrypted on import). Delete source CSV files containing secrets after import.")
         up = st.file_uploader("accounts.csv", type="csv")
         if up is not None and st.button("Import"):
-            tmp = Path(st.session_state.get("tmp_dir", ".")) / "import.csv"
-            tmp.write_bytes(up.getvalue())
-            added, skipped = import_accounts(db, tmp, vault if vault.is_unlocked else None)
-            tmp.unlink(missing_ok=True)
-            st.success(f"Imported {added}, skipped {skipped}")
+            try:
+                added, skipped = import_accounts(db, StringIO(up.getvalue().decode("utf-8-sig")),
+                                                 vault if vault.is_unlocked else None)
+                st.success(f"Imported {added}, skipped {skipped}")
+            except (ValueError, OSError, ProfileError) as e:
+                st.error(str(e))
         exp = st.text_input("Export to", str(Path.home() / "accounts_export.csv"))
         if st.button("Export CSV (no passwords)"):
             n = export_accounts(db, Path(exp))
