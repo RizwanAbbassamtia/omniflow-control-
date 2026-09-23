@@ -1,6 +1,6 @@
 # Omni Flow Control Centre
 
-**Current version: 0.2.0.** This version includes per-account proxy settings,
+**Current version: 0.2.1.** This version includes per-account proxy settings,
 encrypted proxy credentials, connection tests, and isolated Chrome/Edge browser
 profiles. It is a separate application from the Omni Flow desktop installer.
 
@@ -51,7 +51,12 @@ pip install -r requirements.txt
 5. Each job hands off to your existing bulk-creation tool through the
    **runner command** (Settings page). Outputs land under the output root, which can
    be a local folder or a Google Drive for Desktop folder.
-6. **Browser profiles**: open Accounts → Manage → Browser profile and proxy.
+6. **Add a single account with a proxy**: unlock the Vault, open Accounts →
+   Add one, and fill in the proxy type, host, port and optional proxy login
+   alongside the account details. The account is saved only after proxy
+   settings pass validation. Then use Accounts → Manage → Browser profile and
+   proxy to test and open it.
+7. **Browser profiles**: open Accounts → Manage → Browser profile and proxy.
    Enter the proxy type (HTTP, HTTPS or SOCKS5), host, port and optional
    username/password. Save, test the connection, then click **Open profile**.
    This creates a persistent, separate Chrome/Edge user-data directory per

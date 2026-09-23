@@ -1,8 +1,13 @@
 # Setting up the Omni Flow Control Centre on the laptop
 
-This guide covers Control Centre **v0.2.0**, including per-account proxy
+This guide covers Control Centre **v0.2.1**, including per-account proxy
 settings and isolated browser profiles. It does not install the separate
 Omni Flow desktop application.
+
+To add one account manually, unlock the Vault and use **Accounts → Add one**.
+Enter its email, monthly credits, proxy type, host, port and optional proxy
+username/password. Then select the account under **Manage** to test its proxy
+and open its isolated browser profile.
 
 Follow these steps in order on the Windows PC that will run the control centre.
 Each step says what to check before moving on.
