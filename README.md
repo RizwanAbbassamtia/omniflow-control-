@@ -51,11 +51,15 @@ pip install -r requirements.txt
 5. Each job hands off to your existing bulk-creation tool through the
    **runner command** (Settings page). Outputs land under the output root, which can
    be a local folder or a Google Drive for Desktop folder.
-6. **Add a single account with a proxy**: unlock the Vault, open Accounts →
-   Add one, and fill in the proxy type, host, port and optional proxy login
-   alongside the account details. The account is saved only after proxy
-   settings pass validation. Then use Accounts → Manage → Browser profile and
-   proxy to test and open it.
+6. **Add a single Google Flow account with a proxy**: unlock the Vault, open
+   Accounts → Add one, and enter the Gmail address, monthly Flow credits for
+   tracking, optional Gmail password/recovery details, proxy type, host, port,
+   and optional proxy login. The account is saved only after proxy settings
+   pass validation. Then use Accounts → Manage → Browser profile and proxy to
+   test and open it. Sign in to Google once in that isolated browser. Future
+   opens reuse the browser's session while Google keeps it valid; Google may
+   ask for sign-in or verification again. Stored passwords are reference
+   details and never perform sign-in automatically.
 7. **Browser profiles**: open Accounts → Manage → Browser profile and proxy.
    Enter the proxy type (HTTP, HTTPS or SOCKS5), host, port and optional
    username/password. Save, test the connection, then click **Open profile**.
@@ -65,6 +69,11 @@ pip install -r requirements.txt
    the browser if the check fails. The observed IP is displayed after testing.
    Leave the app running while the browser is open; its loopback relay supplies
    upstream proxy authentication without putting secrets on the command line.
+
+The 1,000 Google Flow credits are tracked manually, not read from the website.
+The Run page is for a separate Omni Flash API or a configured external runner;
+it does not use Google Flow credits or the browser proxy. No API key is needed
+for manual use of Google Flow in the opened browser.
 
 ### Omni Flash and 9 Sigma
 

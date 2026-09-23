@@ -5,9 +5,14 @@ settings and isolated browser profiles. It does not install the separate
 Omni Flow desktop application.
 
 To add one account manually, unlock the Vault and use **Accounts → Add one**.
-Enter its email, monthly credits, proxy type, host, port and optional proxy
-username/password. Then select the account under **Manage** to test its proxy
-and open its isolated browser profile.
+Enter its email, monthly Google Flow credits for tracking, optional Gmail
+password/recovery details, proxy type, host, port and optional proxy
+username/password. Select the account under **Manage** to test its proxy and
+open its isolated browser profile, then sign in to Google once. Subsequent
+opens reuse that browser session while Google keeps it valid; the saved Gmail
+password does not submit sign-in or verification forms. This
+browser workflow needs no Omni Flash API key. The **Run** page uses a separate
+API or external runner and does not consume Google Flow website credits.
 
 Follow these steps in order on the Windows PC that will run the control centre.
 Each step says what to check before moving on.
