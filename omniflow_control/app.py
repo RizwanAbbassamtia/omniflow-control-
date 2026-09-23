@@ -147,7 +147,7 @@ elif page == "Accounts":
                 except ninesigma.HandOverError as e:
                     st.error(str(e))
             with st.expander("Browser profile and proxy", expanded=False):
-                st.caption("One persistent browser directory per account. Sign in to Google manually in its window. Proxy credentials stay encrypted in the vault.")
+                st.caption("One persistent browser directory per account. Sign in to Google once in its window; later opens reuse that session while Google keeps it valid. Google may request verification again. Proxy credentials stay encrypted in the vault.")
                 existing = vault.load(a["id"]) if vault.is_unlocked else None
                 with st.form("proxy_settings"):
                     types = ["", "http", "https", "socks5"]
@@ -224,10 +224,10 @@ elif page == "Accounts":
             else:
                 creds = vault.load(a["id"]) or Credentials()
                 with st.form("creds"):
-                    pw = st.text_input("Password", creds.password, type="password")
+                    pw = st.text_input("Gmail password (optional, encrypted)", creds.password, type="password")
                     rec = st.text_input("Recovery email", creds.recovery_email)
                     ph = st.text_input("Recovery phone", creds.recovery_phone)
-                    api_key = st.text_input("Omni Flash API key", creds.api_key, type="password")
+                    api_key = st.text_input("Omni Flash API key (optional; not used for Google Flow)", creds.api_key, type="password")
                     cn = st.text_area("Login notes", creds.notes)
                     if st.form_submit_button("Save login details"):
                         creds.password, creds.recovery_email, creds.recovery_phone = pw, rec, ph
@@ -239,32 +239,60 @@ elif page == "Accounts":
                     st.code(creds.password or "(none)")
 
     with tab_add:
+        st.info("Google Flow uses your Google account and its browser profile. Save the account and proxy here, then use Manage → Test proxy → Open profile. Sign in to Google once in that window; future opens reuse its session while Google keeps it valid. A stored Gmail password does not perform sign-in or verification. No Omni Flash API key is needed.")
         with st.form("add"):
-            email = st.text_input("Gmail address")
-            label = st.text_input("Label")
-            team = st.text_input("Team member")
-            monthly = st.number_input("Monthly credits", 0, 100000, 1000)
-            cs = st.date_input("Credit cycle start", date.today())
-            profile = st.text_input("Dedicated browser user-data directory (optional)")
-            api_url = st.text_input("Omni Flash address")
-            pw = st.text_input("Password (stored encrypted)", type="password")
-            api_key = st.text_input("Omni Flash API key (stored encrypted)", type="password")
+            details, connection = st.columns(2)
+            with details:
+                st.markdown("**Google account**")
+                email = st.text_input("Gmail address")
+                label = st.text_input("Label")
+                team = st.text_input("Team member")
+                monthly = st.number_input("Monthly Google Flow credits (tracking only)", 0, 100000, 1000)
+                cs = st.date_input("Credit cycle start", date.today())
+                pw = st.text_input("Gmail password (optional, encrypted)", type="password",
+                                   help="Saved for your reference. Sign in once in the isolated browser; later opens reuse its session while Google keeps it valid.")
+                recovery_email = st.text_input("Recovery email (optional, encrypted)")
+                recovery_phone = st.text_input("Recovery phone (optional, encrypted)")
+            with connection:
+                st.markdown("**Browser proxy**")
+                proxy_type = st.selectbox("New account proxy type", ["", "http", "https", "socks5"],
+                                          format_func=lambda x: x.upper() if x else "Not configured")
+                proxy_host = st.text_input("New account proxy host")
+                proxy_port = st.number_input("New account proxy port", min_value=0, max_value=65535, value=0)
+                proxy_username = st.text_input("New account proxy username")
+                proxy_password = st.text_input("New account proxy password", type="password")
+                profile = st.text_input("Dedicated browser user-data directory (optional)",
+                                        help="Leave blank to create an isolated browser directory automatically.")
             if st.form_submit_button("Add account"):
-                if not email:
+                proxy_input = bool(proxy_host.strip() or proxy_port or proxy_username or proxy_password)
+                secrets_entered = bool(pw or recovery_email or recovery_phone or proxy_username or proxy_password)
+                if not email.strip():
                     st.error("email required")
                 elif db.get_account_by_email(email):
                     st.error("already exists")
+                elif proxy_input and not proxy_type:
+                    st.error("Choose a proxy type or clear the proxy fields")
+                elif secrets_entered and not vault.is_unlocked:
+                    st.error("Unlock the Vault before adding an account with Gmail or proxy login details")
                 else:
-                    aid = db.add_account(email, label, team, int(monthly), cs, profile)
-                    if api_url:
-                        db.update_account(aid, api_base_url=api_url)
-                    if pw or api_key:
-                        if vault.is_unlocked:
-                            vault.store(aid, Credentials(password=pw, api_key=api_key))
-                        else:
-                            st.warning("Vault locked, password not stored")
-                    db.log("account", f"added {email}", actor)
-                    st.success(f"Added {email}")
+                    try:
+                        if proxy_type:
+                            ProxyConfig(proxy_type, proxy_host.strip(), int(proxy_port),
+                                        proxy_username, proxy_password).validate()
+                    except ProfileError as e:
+                        st.error(str(e))
+                    else:
+                        aid = db.add_account(email, label, team, int(monthly), cs, profile)
+                        if proxy_type:
+                            db.update_account(aid, proxy_type=proxy_type, proxy_host=proxy_host.strip(),
+                                              proxy_port=int(proxy_port))
+                        if secrets_entered:
+                            vault.store(aid, Credentials(password=pw, recovery_email=recovery_email,
+                                                         recovery_phone=recovery_phone,
+                                                         proxy_username=proxy_username,
+                                                         proxy_password=proxy_password))
+                        db.log("account", f"added {email}", actor)
+                        st.success(f"Added {email}. Select it in Manage, test the proxy, then open its browser profile to sign in to Google.")
 
     with tab_import:
         st.write("CSV columns: email, label, team_member, credits_monthly, cycle_start, profile_dir, api_base_url, notes, proxy_type, proxy_host, proxy_port; optional password, recovery_email, recovery_phone, api_key, proxy_username, proxy_password (encrypted on import). Delete source CSV files containing secrets after import.")
@@ -326,6 +354,7 @@ elif page == "Queue":
 # ---- Run --------------------------------------------------------------------
 elif page == "Run":
     st.title("Run queue on the active account")
+    st.info("This page runs API or external commands. Google Flow's 1,000 account credits are used only when you open that account's browser profile and generate in the Flow website; this Run page does not spend Flow credits or use its browser proxy.")
     active_id = q.get_active_account_id(db)
     if not active_id:
         st.warning("Activate an account first.")
