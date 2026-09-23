@@ -7,4 +7,4 @@ human decision: when the active account is out of credits the queue pauses
 and waits for an operator to activate another one.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
