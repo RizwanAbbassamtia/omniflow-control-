@@ -1,5 +1,9 @@
 # Setting up the Omni Flow Control Centre on the laptop
 
+This guide covers Control Centre **v0.2.0**, including per-account proxy
+settings and isolated browser profiles. It does not install the separate
+Omni Flow desktop application.
+
 Follow these steps in order on the Windows PC that will run the control centre.
 Each step says what to check before moving on.
 
