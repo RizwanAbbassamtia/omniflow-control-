@@ -1,13 +1,13 @@
 # Setting up the Omni Flow Control Centre on the laptop
 
-This guide covers Control Centre **v0.2.1**, including per-account proxy
+This guide covers Control Centre **v0.2.2**, including per-account proxy
 settings and isolated browser profiles. It does not install the separate
 Omni Flow desktop application.
 
 To add one account manually, unlock the Vault and use **Accounts → Add one**.
 Enter its email, monthly Google Flow credits for tracking, optional Gmail
-password/recovery details, proxy type, host, port and optional proxy
-username/password. Select the account under **Manage** to test its proxy and
+password/recovery details, and one proxy string in
+`host:port:username:password` format. Select the account under **Manage** to test its proxy and
 open its isolated browser profile, then sign in to Google once. Subsequent
 opens reuse that browser session while Google keeps it valid; the saved Gmail
 password does not submit sign-in or verification forms. This
@@ -72,14 +72,21 @@ The browser opens at http://localhost:8501. Leave the black window open while us
 
 ## 6. Load the accounts
 
-Prepare `accounts.csv` with these columns (header row required):
+Download the simple template on **Accounts → Import CSV** and enter one account
+per row. The columns are:
 
 ```
-email,label,team_member,credits_monthly,api_base_url,api_key,password,recovery_email
+email,password,proxy,credits_monthly,team_member
 ```
 
-Only `email` is required. `api_key` and `password` are stored encrypted.
-Then **Accounts page, Import CSV tab**: choose the file, click *Import*.
+Only `email` is required. The `password` column is the Gmail password, and
+`proxy` holds the complete proxy, for example
+`proxy.example.com:8080:sample-user:sample-pass`. HTTP is the default. Add an
+optional `proxy_type` column for HTTPS or SOCKS5. Unlock the Vault before
+importing passwords or proxies; their credentials are encrypted after import.
+Existing emails are skipped. To change the proxy for an existing account,
+select it under **Manage → Browser profile and proxy**, paste the new proxy,
+and save. Delete filled CSV files with passwords after import.
 
 Check: the Dashboard shows the account count.
 
@@ -99,8 +106,8 @@ An account whose key is refused is marked disabled with the reason.
 4. When the active account runs out, the run stops and the Dashboard shows a
    red banner. Go to Accounts, activate the next account, run again.
 5. To open Google Flow for an account, go to **Accounts → Manage → Browser
-   profile and proxy**. Enter its proxy type, host, port and, if required,
-   username/password. Unlock the vault and save, click **Test proxy** to see
+   profile and proxy**. Paste the complete proxy, unlock the vault and save,
+   click **Test proxy** to see
    the public IP, then click **Open profile**. Sign in yourself the first time.
    Leave the control centre running while the profile is open. A failed proxy
    test stops the launch. Keep separate profile directories per account.
