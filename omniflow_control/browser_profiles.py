@@ -49,6 +49,20 @@ class ProxyConfig:
             raise ProfileError("Proxy username is required with a password")
 
 
+def parse_proxy_line(value: str, kind: str = "http") -> ProxyConfig:
+    """Parse host:port:username:password as supplied by proxy vendors."""
+    parts = value.strip().split(":", 3)
+    if len(parts) != 4 or not all(parts):
+        raise ProfileError("Paste proxy as host:port:username:password")
+    try:
+        port = int(parts[1])
+    except ValueError as exc:
+        raise ProfileError("Proxy port must be a number") from exc
+    config = ProxyConfig(kind, parts[0].strip(), port, parts[2], parts[3])
+    config.validate()
+    return config
+
+
 def _read_exact(sock: socket.socket, n: int) -> bytes:
     result = bytearray()
     while len(result) < n:

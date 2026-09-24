@@ -9,7 +9,7 @@ from typing import Optional, TextIO
 
 from .db import Database
 from .vault import Credentials, Vault
-from .browser_profiles import ProxyConfig
+from .browser_profiles import ProxyConfig, parse_proxy_line
 
 COLUMNS = ["email", "label", "team_member", "credits_monthly", "cycle_start", "profile_dir",
            "api_base_url", "notes", "proxy_type", "proxy_host", "proxy_port"]
@@ -31,13 +31,20 @@ def import_accounts(db: Database, path: Path | TextIO, vault: Optional[Vault] = 
                 skipped += 1
                 continue
             cs = (row.get("cycle_start") or "").strip()
-            kind = (row.get("proxy_type") or "").strip().lower()
+            compact = (row.get("proxy") or "").strip()
+            kind = (row.get("proxy_type") or ("http" if compact else "")).strip().lower()
             host = (row.get("proxy_host") or "").strip()
             port = int(row.get("proxy_port") or 0)
+            proxy_username = row.get("proxy_username") or ""
+            proxy_password = row.get("proxy_password") or ""
+            if compact:
+                parsed = parse_proxy_line(compact, kind)
+                kind, host, port = parsed.kind, parsed.host, parsed.port
+                proxy_username, proxy_password = parsed.username, parsed.password
             if kind:
-                ProxyConfig(kind, host, port, row.get("proxy_username") or "", row.get("proxy_password") or "").validate()
+                ProxyConfig(kind, host, port, proxy_username, proxy_password).validate()
             secret_fields = ("password", "recovery_email", "recovery_phone", "api_key", "proxy_username", "proxy_password")
-            if any(row.get(k) for k in secret_fields) and (vault is None or not vault.is_unlocked):
+            if (any(row.get(k) for k in secret_fields) or compact) and (vault is None or not vault.is_unlocked):
                 raise ValueError("Unlock the vault before importing accounts with credentials or proxy authentication")
             account_id = db.add_account(
                 email=email,
@@ -52,7 +59,7 @@ def import_accounts(db: Database, path: Path | TextIO, vault: Optional[Vault] = 
                 db.update_account(account_id, api_base_url=row["api_base_url"].strip())
             if kind:
                 db.update_account(account_id, proxy_type=kind, proxy_host=host, proxy_port=port)
-            if any(row.get(k) for k in secret_fields):
+            if any(row.get(k) for k in secret_fields) or compact:
                 vault.store(
                     account_id,
                     Credentials(
@@ -60,8 +67,8 @@ def import_accounts(db: Database, path: Path | TextIO, vault: Optional[Vault] = 
                         recovery_email=row.get("recovery_email") or "",
                         recovery_phone=row.get("recovery_phone") or "",
                         api_key=(row.get("api_key") or "").strip(),
-                        proxy_username=row.get("proxy_username") or "",
-                        proxy_password=row.get("proxy_password") or "",
+                        proxy_username=proxy_username,
+                        proxy_password=proxy_password,
                     ),
                 )
             added += 1
