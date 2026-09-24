@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from omniflow_control.browser_profiles import ProxyConfig, ProxyRelay, ProfileError, launch_profile
+from omniflow_control.browser_profiles import ProxyConfig, ProxyRelay, ProfileError, launch_profile, parse_proxy_line
 from omniflow_control.db import Database
 from omniflow_control.vault import Credentials, Vault
 
@@ -60,6 +60,37 @@ def test_add_one_form_rejects_invalid_proxy_before_account_creation(tmp_path, mo
     db = Database(tmp_path / "invalid.db")
     assert db.get_account_by_email("invalid@example.com") is None
     db.close()
+
+
+def test_compact_proxy_and_gmail_password_in_add_form(tmp_path, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    import streamlit as st
+
+    st.cache_resource.clear()
+    monkeypatch.setenv("OMNI_DB", str(tmp_path / "compact.db"))
+    app = AppTest.from_file(Path(__file__).resolve().parents[1] / "omniflow_control/app.py").run()
+    app.sidebar.text_input(key="init_pw").set_value("a safe master password")
+    next(b for b in app.sidebar.button if b.label == "Initialise vault").click().run()
+    app.sidebar.radio[0].set_value("Accounts").run()
+    field = lambda elements, label: next(e for e in elements if e.label == label)
+    field(app.text_input, "Gmail address").set_value("compact@example.com")
+    field(app.text_input, "Gmail password (optional, encrypted)").set_value("google-secret")
+    field(app.text_input, "Paste proxy (host:port:username:password)").set_value("proxy.example.com:8080:sample-user:sample-pass")
+    field(app.button, "Add account").click().run()
+    assert not app.exception and any("Added compact@example.com" in x.value for x in app.success)
+    db = Database(tmp_path / "compact.db")
+    a = db.get_account_by_email("compact@example.com")
+    vault = Vault(db)
+    vault.unlock("a safe master password")
+    assert (a["proxy_type"], a["proxy_host"], a["proxy_port"]) == ("http", "proxy.example.com", 8080)
+    assert (vault.load(a["id"]).proxy_username, vault.load(a["id"]).proxy_password) == ("sample-user", "sample-pass")
+    assert vault.load(a["id"]).password == "google-secret"
+    db.close()
+
+
+def test_compact_proxy_rejects_incomplete_input():
+    with pytest.raises(ProfileError, match="host:port:username:password"):
+        parse_proxy_line("proxy.example:8080:user")
 
 
 def test_authenticated_http_connect_forwards_and_never_exposes_secret_to_browser():
@@ -170,4 +201,21 @@ def test_csv_import_keeps_proxy_password_in_vault(tmp_path):
     export_accounts(db, exported)
     assert "secret" not in exported.read_text()
     assert "proxy.example" in exported.read_text()
+    db.close()
+
+
+def test_simple_csv_import_with_google_password_and_proxy(tmp_path):
+    from omniflow_control.accounts_io import import_accounts
+    db = Database(tmp_path / "db.sqlite")
+    vault = Vault(db)
+    vault.initialise("a safe master password")
+    csv_file = tmp_path / "simple.csv"
+    csv_file.write_text("email,password,proxy,credits_monthly,team_member\n"
+                        "example@gmail.com,google-secret,proxy.example.com:8080:sample-user:sample-pass,1000,Alice\n")
+    assert import_accounts(db, csv_file, vault) == (1, 0)
+    a = db.get_account_by_email("example@gmail.com")
+    assert a["proxy_host"] == "proxy.example.com" and a["proxy_port"] == 8080
+    creds = vault.load(a["id"])
+    assert (creds.password, creds.proxy_username, creds.proxy_password) == ("google-secret", "sample-user", "sample-pass")
+    assert b"google-secret" not in db.get_credentials(a["id"])
     db.close()

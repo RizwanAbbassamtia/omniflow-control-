@@ -1,8 +1,10 @@
 # Omni Flow Control Centre
 
-**Current version: 0.2.1.** This version includes per-account proxy settings,
-encrypted proxy credentials, connection tests, and isolated Chrome/Edge browser
-profiles. It is a separate application from the Omni Flow desktop installer.
+**Current version: 0.2.2.** Accounts accept a pasted
+`host:port:username:password` proxy and the Import CSV page provides a simple
+`email,password,proxy,credits_monthly,team_member` template. Password means the
+Gmail password; it is encrypted on import. The proxy username and password are
+encrypted separately. It is a separate application from the Omni Flow desktop installer.
 
 | App | Start with | What it does |
 |-----|-----------|--------------|
@@ -53,16 +55,16 @@ pip install -r requirements.txt
    be a local folder or a Google Drive for Desktop folder.
 6. **Add a single Google Flow account with a proxy**: unlock the Vault, open
    Accounts → Add one, and enter the Gmail address, monthly Flow credits for
-   tracking, optional Gmail password/recovery details, proxy type, host, port,
-   and optional proxy login. The account is saved only after proxy settings
+   tracking, optional Gmail password/recovery details, and a pasted proxy such
+   as `proxy.example.com:8080:sample-user:sample-pass`. HTTP is the default;
+   select HTTPS or SOCKS5 when needed. The account is saved only after proxy settings
    pass validation. Then use Accounts → Manage → Browser profile and proxy to
    test and open it. Sign in to Google once in that isolated browser. Future
    opens reuse the browser's session while Google keeps it valid; Google may
    ask for sign-in or verification again. Stored passwords are reference
    details and never perform sign-in automatically.
 7. **Browser profiles**: open Accounts → Manage → Browser profile and proxy.
-   Enter the proxy type (HTTP, HTTPS or SOCKS5), host, port and optional
-   username/password. Save, test the connection, then click **Open profile**.
+   Paste the proxy, save, test the connection, then click **Open profile**.
    This creates a persistent, separate Chrome/Edge user-data directory per
    account (or uses the directory specified on that account). Sign in manually
    in the opened browser. Each launch checks the proxy first; it will not open
@@ -135,8 +137,14 @@ python -m omniflow_control.cli run --max 20          # or --dry-run to test the 
 python -m omniflow_control.cli status
 ```
 
-CSV columns: `email, label, team_member, credits_monthly, cycle_start, profile_dir, api_base_url, notes, proxy_type, proxy_host, proxy_port`
-plus optional `password, recovery_email, recovery_phone, api_key, proxy_username, proxy_password` (stored encrypted, never exported). Unlock the vault before importing credentials. The source CSV contains plain-text secrets; delete it after import.
+Download the simple template from Accounts → Import CSV. Its columns are
+`email,password,proxy,credits_monthly,team_member`. `password` means Gmail password,
+and `proxy` means `host:port:username:password`. Both are encrypted on import.
+Optional `proxy_type` selects `https` or `socks5` (default `http`). The previous
+detailed columns (`label, cycle_start, profile_dir, api_base_url, notes, proxy_host,
+proxy_port, proxy_username, proxy_password, recovery_email, recovery_phone, api_key`)
+remain accepted. Existing emails are skipped; change their proxy on the Manage page.
+Unlock the vault before importing secrets and delete filled CSV files after import.
 
 ### Tests
 

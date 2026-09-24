@@ -12,7 +12,7 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from omniflow_control import __version__, ninesigma, queue as q  # noqa: E402
-from omniflow_control.browser_profiles import ProxyConfig, ProfileError, check_proxy, launch_profile  # noqa: E402
+from omniflow_control.browser_profiles import ProxyConfig, ProfileError, check_proxy, launch_profile, parse_proxy_line  # noqa: E402
 from omniflow_control.accounts_io import export_accounts, import_accounts  # noqa: E402
 from omniflow_control.cli import RUNNER_COMMAND_KEY  # noqa: E402
 from omniflow_control.db import DEFAULT_DB, Database  # noqa: E402
@@ -149,7 +149,24 @@ elif page == "Accounts":
             with st.expander("Browser profile and proxy", expanded=False):
                 st.caption("One persistent browser directory per account. Sign in to Google once in its window; later opens reuse that session while Google keeps it valid. Google may request verification again. Proxy credentials stay encrypted in the vault.")
                 existing = vault.load(a["id"]) if vault.is_unlocked else None
+                with st.form("paste_proxy_settings"):
+                    pasted_proxy = st.text_input("Paste proxy (host:port:username:password)", type="password",
+                                                 placeholder="proxy.example.com:8080:username:password")
+                    pasted_kind = st.selectbox("Proxy protocol", ["http", "https", "socks5"],
+                                               index=["http", "https", "socks5"].index(a["proxy_type"]) if a["proxy_type"] in ("http", "https", "socks5") else 0)
+                    if st.form_submit_button("Save pasted proxy", disabled=not vault.is_unlocked):
+                        try:
+                            parsed = parse_proxy_line(pasted_proxy, pasted_kind)
+                            db.update_account(a["id"], proxy_type=parsed.kind, proxy_host=parsed.host, proxy_port=parsed.port)
+                            creds = existing or Credentials()
+                            creds.proxy_username, creds.proxy_password = parsed.username, parsed.password
+                            vault.store(a["id"], creds)
+                            db.log("proxy", f"proxy configuration changed for {a['email']}", actor)
+                            st.success("Proxy saved. Test proxy before opening the profile.")
+                        except ProfileError as e:
+                            st.error(str(e))
                 with st.form("proxy_settings"):
+                    st.caption("Or enter proxy details separately")
                     types = ["", "http", "https", "socks5"]
                     kind = st.selectbox("Proxy type", types, index=types.index(a["proxy_type"]) if a["proxy_type"] in types else 0,
                                         format_func=lambda x: x.upper() if x else "Not configured")
@@ -255,6 +272,9 @@ elif page == "Accounts":
                 recovery_phone = st.text_input("Recovery phone (optional, encrypted)")
             with connection:
                 st.markdown("**Browser proxy**")
+                compact_proxy = st.text_input("Paste proxy (host:port:username:password)", type="password",
+                                              placeholder="proxy.example.com:8080:username:password")
+                st.caption("Default protocol: HTTP. To use HTTPS or SOCKS5, select that type below. Separate fields remain optional.")
                 proxy_type = st.selectbox("New account proxy type", ["", "http", "https", "socks5"],
                                           format_func=lambda x: x.upper() if x else "Not configured")
                 proxy_host = st.text_input("New account proxy host")
@@ -264,18 +284,22 @@ elif page == "Accounts":
                 profile = st.text_input("Dedicated browser user-data directory (optional)",
                                         help="Leave blank to create an isolated browser directory automatically.")
             if st.form_submit_button("Add account"):
-                proxy_input = bool(proxy_host.strip() or proxy_port or proxy_username or proxy_password)
-                secrets_entered = bool(pw or recovery_email or recovery_phone or proxy_username or proxy_password)
+                proxy_input = bool(compact_proxy.strip() or proxy_host.strip() or proxy_port or proxy_username or proxy_password)
+                secrets_entered = bool(pw or recovery_email or recovery_phone or compact_proxy or proxy_username or proxy_password)
                 if not email.strip():
                     st.error("email required")
                 elif db.get_account_by_email(email):
                     st.error("already exists")
-                elif proxy_input and not proxy_type:
+                elif proxy_input and not proxy_type and not compact_proxy.strip():
                     st.error("Choose a proxy type or clear the proxy fields")
                 elif secrets_entered and not vault.is_unlocked:
                     st.error("Unlock the Vault before adding an account with Gmail or proxy login details")
                 else:
                     try:
+                        if compact_proxy.strip():
+                            parsed = parse_proxy_line(compact_proxy, proxy_type or "http")
+                            proxy_type, proxy_host, proxy_port = parsed.kind, parsed.host, parsed.port
+                            proxy_username, proxy_password = parsed.username, parsed.password
                         if proxy_type:
                             ProxyConfig(proxy_type, proxy_host.strip(), int(proxy_port),
                                         proxy_username, proxy_password).validate()
@@ -295,7 +319,10 @@ elif page == "Accounts":
                         st.success(f"Added {email}. Select it in Manage, test the proxy, then open its browser profile to sign in to Google.")
 
     with tab_import:
-        st.write("CSV columns: email, label, team_member, credits_monthly, cycle_start, profile_dir, api_base_url, notes, proxy_type, proxy_host, proxy_port; optional password, recovery_email, recovery_phone, api_key, proxy_username, proxy_password (encrypted on import). Delete source CSV files containing secrets after import.")
+        st.write("Download the simple template, enter one Gmail and proxy per row, and save it as CSV. The `password` column is the Gmail password, stored encrypted after import. Proxy format: host:port:username:password. Protocol defaults to HTTP; an optional `proxy_type` column can specify HTTPS or SOCKS5. Sign in to Google once manually in each browser profile.")
+        st.download_button("Download simple CSV template", "email,password,proxy,credits_monthly,team_member\n",
+                           file_name="accounts-simple-template.csv", mime="text/csv")
+        st.caption("Unlock the Vault before importing Gmail passwords or proxies. An existing Gmail is skipped; update its proxy under Manage → Browser profile and proxy. Delete filled CSV files containing passwords after import.")
         up = st.file_uploader("accounts.csv", type="csv")
         if up is not None and st.button("Import"):
             try:
