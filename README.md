@@ -1,6 +1,9 @@
 # Omni Flow Control Centre
 
-**Current version: 0.2.2.** Accounts accept a pasted
+**Current version: 0.2.3.** Gmail and Vault master passwords are optional on
+Windows. The app uses the signed-in Windows account to protect saved proxy
+credentials; an existing master password vault still needs to be unlocked.
+Accounts accept a pasted
 `host:port:username:password` proxy and the Import CSV page provides a simple
 `email,password,proxy,credits_monthly,team_member` template. Password means the
 Gmail password; it is encrypted on import. The proxy username and password are
@@ -18,14 +21,18 @@ encrypted separately. It is a separate application from the Omni Flow desktop in
    Alternatively, download the release ZIP and extract it to a folder such as
    `C:\OmniFlowControl`.
 3. Double-click **Start-OmniFlowControl.bat**. The first run installs the packages, then the dashboard opens at http://localhost:8501.
-4. In the sidebar create the master password, then use the **Accounts** page to import your CSV.
+4. On Windows, the app protects secrets using your Windows sign-in automatically.
+   Open **Accounts** to add one account or import your CSV. The Gmail password
+   column may be blank. Existing master password vaults still require unlocking.
 
 If you cloned the repository, double-click **Update-OmniFlowControl.bat** to pull
 newer versions. If you installed from a ZIP, download and extract a new release
 instead; the update batch file needs a Git clone. Account data and encrypted
 credentials are stored outside the code folder in
 `%USERPROFILE%\.omniflow_control\control.db` by default. Back up this database
-before changing computers or reinstalling Windows.
+before changing computers or reinstalling Windows. Windows protected secrets
+cannot be opened on a different Windows account or after a Windows reinstall
+from the database backup alone.
 
 ## Install (command line)
 
@@ -40,8 +47,9 @@ pip install -r requirements.txt
 
 ### How it works
 
-1. **Accounts** are stored in a local SQLite database. Logins are encrypted with a
-   master password that is typed at startup and never written to disk.
+1. **Accounts** are stored in a local SQLite database. On Windows, saved secrets
+   are encrypted with a key protected by your Windows sign-in. Existing master
+   password vaults retain their password. On other systems, create a master password.
 2. Each account has a **monthly credit allowance** and a **cycle start**. Every job
    records what it spent, so the dashboard shows remaining credits per account.
    When Google renews an account, click **Start new credit cycle**.
@@ -53,7 +61,7 @@ pip install -r requirements.txt
 5. Each job hands off to your existing bulk-creation tool through the
    **runner command** (Settings page). Outputs land under the output root, which can
    be a local folder or a Google Drive for Desktop folder.
-6. **Add a single Google Flow account with a proxy**: unlock the Vault, open
+6. **Add a single Google Flow account with a proxy**: open
    Accounts → Add one, and enter the Gmail address, monthly Flow credits for
    tracking, optional Gmail password/recovery details, and a pasted proxy such
    as `proxy.example.com:8080:sample-user:sample-pass`. HTTP is the default;

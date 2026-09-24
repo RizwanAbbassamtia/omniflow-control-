@@ -1,10 +1,12 @@
 # Setting up the Omni Flow Control Centre on the laptop
 
-This guide covers Control Centre **v0.2.2**, including per-account proxy
+This guide covers Control Centre **v0.2.3**, including per-account proxy
 settings and isolated browser profiles. It does not install the separate
 Omni Flow desktop application.
 
-To add one account manually, unlock the Vault and use **Accounts → Add one**.
+To add one account manually, use **Accounts → Add one**. Windows protects proxy
+credentials automatically without a master password. If you already created
+a master password vault, unlock it first.
 Enter its email, monthly Google Flow credits for tracking, optional Gmail
 password/recovery details, and one proxy string in
 `host:port:username:password` format. Select the account under **Manage** to test its proxy and
@@ -57,9 +59,9 @@ The browser opens at http://localhost:8501. Leave the black window open while us
 
 ## 5. First-time setup inside the app
 
-1. **Sidebar, Vault**: type a master password of at least 8 characters and click
-   *Initialise vault*. Write this password down somewhere safe. It is never
-   stored and cannot be recovered.
+1. **Sidebar, Vault**: on Windows it says "Protected by this Windows user account";
+   no master password is required. If an earlier version created a master password
+   vault, unlock it with that password. The Gmail password field is optional.
 2. **Sidebar, Your name**: type your name so the activity log shows who did what.
    This is a local operator label, not an access-control login. Do not expose
    the dashboard on your office network or the public Internet.
